@@ -1,0 +1,47 @@
+{
+  "info": {
+    "name": "Xeno Assignment API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "AI Suggest Message",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:4000/api/ai/suggest-message",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "4000",
+          "path": [
+            "api",
+            "ai",
+            "suggest-message"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\"context\": \"Promote 20% off weekend sale\", \"audience\": \"customers spent > 100\", \"tone\": \"urgent\", \"n\": 3}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Has suggestions', function () { pm.expect(pm.response.json().suggestions.length).to.be.above(0); });"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

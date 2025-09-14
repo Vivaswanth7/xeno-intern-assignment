@@ -1,0 +1,263 @@
+{
+  "info": {
+    "name": "Campaign App - Full E2E",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "AI Suggest Message",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"context\": \"Promote 20% off weekend sale\", \"audience\": \"customers spent > 100\", \"tone\": \"urgent\", \"n\": 3}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/ai/suggest-message",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "ai",
+            "suggest-message"
+          ]
+        },
+        "description": "AI suggestion test"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('AI suggestions array exists', function(){ var json = pm.response.json(); pm.expect(json.suggestions).to.be.an('array'); pm.expect(json.suggestions.length).to.be.above(0); });"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create Customer",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"name\": \"Alice\", \"email\": \"alice@test.com\", \"phone\": \"1234567890\"}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/customers",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "customers"
+          ]
+        },
+        "description": "Create a customer"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('customer created or exists', function(){ pm.expect(pm.response.code).to.be.oneOf([200,201]); var json = pm.response.json(); if (json.data) pm.environment.set('CUSTOMER_EMAIL', json.data.email); });"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create Order",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"customer_email\": \"{{CUSTOMER_EMAIL}}\", \"amount\": 500, \"items\": [{\"sku\": \"SKU123\", \"qty\": 2}]}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/orders",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "orders"
+          ]
+        },
+        "description": "Create an order"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('order created', function(){ pm.expect(pm.response.code).to.be.oneOf([200,201]); var json = pm.response.json(); if (json.data) pm.environment.set('ORDER_ID', json.data.id); });"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create Segment (protected)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"name\": \"HighSpenders\", \"conditions\": [{\"field\": \"total_spent\", \"op\": \"gt\", \"value\": 100}], \"logic\": \"AND\"}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/segments",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "segments"
+          ]
+        },
+        "description": "Create a segment (requires auth)"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('segment created', function(){ pm.expect(pm.response.code).to.be.oneOf([200,201]); var json = pm.response.json(); if (json.data) pm.environment.set('SEGMENT_ID', json.data.id); });"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create Campaign (protected)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"name\": \"Promo1\", \"segmentId\": \"{{SEGMENT_ID}}\", \"message\": \"Big Sale!\"}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/campaigns",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "campaigns"
+          ]
+        },
+        "description": "Create campaign"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('campaign created', function(){ pm.expect(pm.response.code).to.be.oneOf([200,201]); var json = pm.response.json(); if (json.data) pm.environment.set('CAMPAIGN_ID', json.data.id); });"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Send Campaign (protected)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": ""
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/campaigns/{{CAMPAIGN_ID}}/send",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "campaigns",
+            "{{CAMPAIGN_ID}}",
+            "send"
+          ]
+        },
+        "description": "Send campaign - triggers simulated sends"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('campaign sent', function(){ pm.expect(pm.response.code).to.equal(200); var json = pm.response.json(); pm.expect(json.audience_count).to.be.a('number'); });"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get Communication Log",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/communication-log",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "communication-log"
+          ]
+        },
+        "description": "Fetch comm log"
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4000"
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+[
+  {
+    "id": "6c92751f-c66f-4a30-99f7-7fc07bad8ac9",
+    "name": "September promo",
+    "segmentId": "30c5cddf-ba3c-4b86-b2b5-af99f842ac13",
+    "message": "Hello valued customer! Enjoy our September offer.",
+    "status": "SENT",
+    "createdAt": "2025-09-13T21:10:16.924Z"
+  },
+  {
+    "id": "83d0a2fe-8b71-459c-aa2e-26598d0eeb0f",
+    "name": "October Offer",
+    "segmentId": "30c5cddf-ba3c-4b86-b2b5-af99f842ac13",
+    "message": "Special 20% off for October!",
+    "status": "SENT",
+    "createdAt": "2025-09-13T21:46:15.640Z"
+  },
+  {
+    "id": "8d35a494-004c-45de-9393-0e722e9ddd9a",
+    "name": "ABCS",
+    "segmentId": "30c5cddf-ba3c-4b86-b2b5-af99f842ac13",
+    "message": "ABCD",
+    "status": "SENT",
+    "createdAt": "2025-09-14T12:29:49.930Z"
+  }
+]

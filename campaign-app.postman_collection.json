@@ -1,0 +1,46 @@
+{
+  "info": {
+    "name": "Campaign App - E2E (auto)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "AI Suggest Message",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"context\": \"Promote 20% off weekend sale\", \"audience\": \"customers spent > 100\", \"tone\": \"urgent\", \"n\": 3}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/ai/suggest-message",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "ai",
+            "suggest-message"
+          ]
+        },
+        "description": "AI suggestion test"
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4000"
+    },
+    {
+      "key": "ACCESS_TOKEN",
+      "value": ""
+    }
+  ]
+}

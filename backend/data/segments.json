@@ -1,0 +1,15 @@
+[
+  {
+    "id": "30c5cddf-ba3c-4b86-b2b5-af99f842ac13",
+    "name": "High spenders",
+    "conditions": [
+      {
+        "field": "total_spent",
+        "op": "gt",
+        "value": 100
+      }
+    ],
+    "logic": "AND",
+    "createdAt": "2025-09-13T20:58:12.485Z"
+  }
+]

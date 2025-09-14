@@ -1,0 +1,30 @@
+[
+  {
+    "id": "68c9fc7e-5362-44c2-84fd-d9d4b9414676",
+    "customer_email": "bob@example.com",
+    "amount": 100,
+    "date": "2025-09-13T20:15:29.250Z",
+    "items": [
+      {
+        "sku": "ABC123",
+        "qty": 2
+      }
+    ],
+    "metadata": {},
+    "createdAt": "2025-09-13T20:15:29.251Z"
+  },
+  {
+    "id": "c5f17bd7-6ac6-406c-9845-fd2d9bc083f4",
+    "customer_email": "bob@example.com",
+    "amount": 50,
+    "date": "2025-09-13T20:28:32.901Z",
+    "items": [
+      {
+        "sku": "XYZ",
+        "qty": 1
+      }
+    ],
+    "metadata": {},
+    "createdAt": "2025-09-13T20:28:32.903Z"
+  }
+]

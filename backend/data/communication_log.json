@@ -1,0 +1,26 @@
+[
+  {
+    "id": "f0e8821b-ca1e-42fc-bd54-cea13e9234f0",
+    "campaignId": "6c92751f-c66f-4a30-99f7-7fc07bad8ac9",
+    "customer_email": "bob@example.com",
+    "status": "SENT",
+    "message": "Hello valued customer! Enjoy our September offer.",
+    "timestamp": "2025-09-13T22:46:43.821Z"
+  },
+  {
+    "id": "bb261eca-f8dd-495b-9ffc-fef3358d7a51",
+    "campaignId": "83d0a2fe-8b71-459c-aa2e-26598d0eeb0f",
+    "customer_email": "bob@example.com",
+    "status": "SENT",
+    "message": "Special 20% off for October!",
+    "timestamp": "2025-09-13T22:58:04.285Z"
+  },
+  {
+    "id": "936cdc65-cda3-4b1d-aff9-56ee4505035e",
+    "campaignId": "8d35a494-004c-45de-9393-0e722e9ddd9a",
+    "customer_email": "bob@example.com",
+    "status": "SENT",
+    "message": "ABCD",
+    "timestamp": "2025-09-14T12:36:31.414Z"
+  }
+]
