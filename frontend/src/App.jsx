@@ -7,9 +7,12 @@ import CreateSegment from './pages/CreateSegment'
 import Campaigns from './pages/Campaigns'
 import Logs from './pages/Logs'
 
-// ✅ set axios defaults for all requests
+// Use VITE_API_URL from env (set in Vercel) with a localhost fallback for dev
+const API_BASE = (import.meta.env.VITE_API_URL && import.meta.env.VITE_API_URL.replace(/\/$/, '')) || 'http://localhost:4000'
+
+// ✅ set axios defaults for all requests (so relative paths use this base)
 axios.defaults.withCredentials = true
-axios.defaults.baseURL = "http://localhost:4000"
+axios.defaults.baseURL = API_BASE
 
 export default function App() {
   const [user, setUser] = useState(null)
@@ -62,7 +65,7 @@ export default function App() {
             </div>
           ) : (
             <a 
-              href="http://localhost:4000/auth/google"
+              href={`${API_BASE}/auth/google`}
               style={{padding: "5px 10px", background: "blue", color: "white", borderRadius: "5px", textDecoration: "none"}}
             >
               Login with Google
