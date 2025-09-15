@@ -362,6 +362,29 @@ app.get('/me', (req, res) => {
 // including validation schemas, /api/customers, /api/orders, /api/segments,
 // /api/campaigns, /api/communication-log, receipts processor, etc.
 
+// --- Receipts batch processor: runs every 30s and applies receipts to communication log ---
+function processReceiptsBatch() {
+  try {
+    const receipts = readJsonSafe(RECEIPTS_FILE);
+    if (!Array.isArray(receipts) || receipts.length === 0) return;
+    const logs = readJsonSafe(COMM_LOG_FILE);
+    let updated = false;
+    receipts.forEach(r => {
+      const idx = logs.findIndex(l => l.campaignId === r.campaignId && l.customer_email === r.customer_email);
+      if (idx !== -1) {
+        logs[idx].status = r.status;
+        logs[idx].deliveredAt = r.receivedAt || new Date().toISOString();
+        updated = true;
+      }
+    });
+    if (updated) writeJsonSafe(COMM_LOG_FILE, logs);
+    // clear receipts file
+    writeJsonSafe(RECEIPTS_FILE, []);
+  } catch (e) {
+    console.error('processReceiptsBatch error', e && e.message ? e.message : e);
+  }
+}
+
 // schedule receipts batch
 setInterval(processReceiptsBatch, 30 * 1000);
 console.log('Receipts batch processor scheduled (every 30s).');
