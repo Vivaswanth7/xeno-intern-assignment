@@ -2,11 +2,11 @@
 const path = require('path');
 const fs = require('fs');
 
-// Load environment variables from backend/.env.local
+// Load environment variables from backend/.env.local in local dev (keep this file in .gitignore)
 const envPath = path.join(__dirname, '.env.local');
-require('dotenv').config({ path: envPath });
-
-
+if (fs.existsSync(envPath)) {
+  require('dotenv').config({ path: envPath });
+}
 
 const express = require('express');
 const rateLimit = require('express-rate-limit');
@@ -18,11 +18,37 @@ const session = require('express-session');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 
+// OPTIONAL: OpenAI client (only created if OPENAI_API_KEY provided)
+let openaiClient = null;
+try {
+  const { Configuration, OpenAIApi } = require('openai');
+  if (process.env.OPENAI_API_KEY) {
+    const cfg = new Configuration({ apiKey: process.env.OPENAI_API_KEY });
+    openaiClient = new OpenAIApi(cfg);
+    console.log('OpenAI client configured');
+  }
+} catch (e) {
+  console.warn('OpenAI SDK not installed or failed to initialize. AI endpoints will return canned responses if no client is available.');
+}
+
 const app = express();
 
 // ---------- MIDDLEWARES ----------
+// CORS - read allowed origins from env and log them for debug
+const rawAllowed = process.env.ALLOWED_ORIGINS || '';
+const allowedOrigins = rawAllowed
+  ? rawAllowed.split(',').map(s => s.trim()).filter(Boolean)
+  : (process.env.FRONTEND_URL ? [process.env.FRONTEND_URL, 'http://localhost:5173'] : ['http://localhost:5173']);
+
+console.log('DEBUG: ALLOWED_ORIGINS env =>', rawAllowed);
+console.log('DEBUG: computed allowedOrigins =>', allowedOrigins);
+
 app.use(cors({
-  origin: "http://localhost:5173",
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true); // allow curl / server-to-server
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error('Not allowed by CORS'), false);
+  },
   credentials: true
 }));
 app.use(express.json());
@@ -34,7 +60,7 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: false, // keep false for local dev; set true in production with HTTPS
+    secure: false, // set true when using HTTPS and a proper domain
     httpOnly: true,
     sameSite: 'lax'
   }
@@ -50,38 +76,44 @@ app.use((req, res, next) => {
   next();
 });
 
-
-// --- Bull queue & Redis setup (for async ingestion) ---
-const REDIS_URL = process.env.REDIS_URL || null;
-let redisClientForQueue = null;
+// ---------- QUEUES (optional) ----------
 let customersQueue = null;
 let ordersQueue = null;
-try {
-  if (REDIS_URL) {
-    redisClientForQueue = new Redis(REDIS_URL);
-    customersQueue = new Queue('customers', REDIS_URL);
-    ordersQueue = new Queue('orders', REDIS_URL);
+if (process.env.REDIS_URL) {
+  try {
+    // require ioredis only if REDIS_URL is provided
+    // Bull can accept a redis URL string
+    customersQueue = new Queue('customers', process.env.REDIS_URL);
+    ordersQueue = new Queue('orders', process.env.REDIS_URL);
     console.log('Bull queues created using REDIS_URL');
-  } else {
-    try {
-      redisClientForQueue = new Redis(); // defaults to localhost:6379
-      customersQueue = new Queue('customers', { redis: { port: 6379, host: '127.0.0.1' } });
-      ordersQueue = new Queue('orders', { redis: { port: 6379, host: '127.0.0.1' } });
-      console.log('Bull queues created using local Redis');
-    } catch (e) {
-      console.warn('Redis not available - queues disabled, will fallback to synchronous writes.', e && e.message ? e.message : e);
-      customersQueue = null;
-      ordersQueue = null;
-    }
+  } catch (e) {
+    console.warn('Failed to initialize Bull queues with REDIS_URL:', e && e.message ? e.message : e);
+    customersQueue = null;
+    ordersQueue = null;
   }
-} catch (e) {
-  console.warn('Error initializing Redis/Bull:', e && e.message ? e.message : e);
-  customersQueue = null;
-  ordersQueue = null;
+} else {
+  console.log('REDIS_URL not set — running without job queues (synchronous writes).');
 }
-// --- end Bull setup ---
-// --- Queue processors (consume jobs and persist to disk) ---
-if (typeof customersQueue !== 'undefined' && customersQueue) {
+
+// ---------- DATA FILES ----------
+const DATA_DIR = path.join(__dirname, 'data');
+const CUSTOMERS_FILE = path.join(DATA_DIR, 'customers.json');
+const ORDERS_FILE = path.join(DATA_DIR, 'orders.json');
+const SEGMENTS_FILE = path.join(DATA_DIR, 'segments.json');
+const CAMPAIGNS_FILE = path.join(DATA_DIR, 'campaigns.json');
+const COMM_LOG_FILE = path.join(DATA_DIR, 'communication_log.json');
+const RECEIPTS_FILE = path.join(DATA_DIR, 'receipts.json');
+
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
+if (!fs.existsSync(CUSTOMERS_FILE)) fs.writeFileSync(CUSTOMERS_FILE, JSON.stringify([]));
+if (!fs.existsSync(ORDERS_FILE)) fs.writeFileSync(ORDERS_FILE, JSON.stringify([]));
+if (!fs.existsSync(SEGMENTS_FILE)) fs.writeFileSync(SEGMENTS_FILE, JSON.stringify([]));
+if (!fs.existsSync(CAMPAIGNS_FILE)) fs.writeFileSync(CAMPAIGNS_FILE, JSON.stringify([]));
+if (!fs.existsSync(COMM_LOG_FILE)) fs.writeFileSync(COMM_LOG_FILE, JSON.stringify([]));
+if (!fs.existsSync(RECEIPTS_FILE)) fs.writeFileSync(RECEIPTS_FILE, JSON.stringify([]));
+
+// ---------- QUEUE PROCESSORS (guarded) ----------
+if (customersQueue) {
   customersQueue.process(async (job) => {
     try {
       const value = job.data.payload;
@@ -108,7 +140,7 @@ if (typeof customersQueue !== 'undefined' && customersQueue) {
   console.log('customersQueue processor registered');
 }
 
-if (typeof ordersQueue !== 'undefined' && ordersQueue) {
+if (ordersQueue) {
   ordersQueue.process(async (job) => {
     try {
       const value = job.data.payload;
@@ -141,96 +173,98 @@ if (typeof ordersQueue !== 'undefined' && ordersQueue) {
   });
   console.log('ordersQueue processor registered');
 }
-// --- end queue processors ---
 
+// ---------- UTILITIES ----------
+function readJsonSafe(filePath) {
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8');
+    return JSON.parse(raw || '[]');
+  } catch (err) {
+    console.error('readJsonSafe error for', filePath, err && err.message ? err.message : err);
+    return [];
+  }
+}
+function writeJsonSafe(filePath, arr) {
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(arr, null, 2));
+  } catch (err) {
+    console.error('writeJsonSafe error for', filePath, err && err.message ? err.message : err);
+    throw err;
+  }
+}
 
-
-
-
-// --- AI Suggest Message Endpoint (patched) ---
-// Rate limit: 10 requests per minute per IP (adjust windowMs/max as needed)
+// ---------- AI Suggest Message Endpoint ----------
 const aiRateLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
+  windowMs: 60 * 1000,
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests, please try again later.' }
 });
 
-app.post("/api/ai/suggest-message", aiRateLimiter, async (req, res) => {
-  // Minimal logging only — don't log user-provided content to avoid leaking PII.
-  console.log(new Date().toISOString(), "AI suggest-message called from", req.ip || req.connection.remoteAddress);
-
+app.post('/api/ai/suggest-message', aiRateLimiter, async (req, res) => {
+  console.log(new Date().toISOString(), 'AI suggest-message called from', req.ip || req.connection.remoteAddress);
   try {
     let body = req.body;
-    if (typeof body === "string") {
-      try { body = JSON.parse(body); } catch (e) { /* keep as string */ }
+    if (typeof body === 'string') {
+      try { body = JSON.parse(body); } catch (e) {}
     }
-
     const context = body && body.context;
     const audience = body && body.audience;
     const tone = body && body.tone;
     const n = body && body.n ? Number(body.n) : 3;
-
-    if (!context && !audience) {
-      return res.status(400).json({ error: "Provide `context` or `audience` in the body." });
-    }
+    if (!context && !audience) return res.status(400).json({ error: 'Provide `context` or `audience` in the body.' });
 
     const promptParts = [
       context ? `Campaign goal / context: ${context}` : null,
       audience ? `Audience: ${audience}` : null,
-      tone ? `Tone: ${tone}` : "Tone: friendly, concise"
-    ].filter(Boolean).join("\n");
+      tone ? `Tone: ${tone}` : 'Tone: friendly, concise'
+    ].filter(Boolean).join('\n');
 
-    // If no API key is configured, return canned suggestions for offline/demo mode.
-    if (!process.env.OPENAI_API_KEY) {
+    if (!process.env.OPENAI_API_KEY || !openaiClient) {
       const canned = [
-        `Big Sale! Save 20% today — ${audience || "our valued customers"}.`,
-        `Exclusive offer for you: ${context || "limited time discount"}. Click to claim!`,
-        `Don't miss out — special deals for ${audience || "selected customers"} this week.`
+        `Big Sale! Save 20% today — ${audience || 'our valued customers'}.`,
+        `Exclusive offer for you: ${context || 'limited time discount'}. Click to claim!`,
+        `Don't miss out — special deals for ${audience || 'selected customers'} this week.`
       ];
-      return res.json({ model: "local-canned", suggestions: canned.slice(0, n || 3) });
+      return res.json({ model: 'local-canned', suggestions: canned.slice(0, n || 3) });
     }
 
-    // Use configured model from env or fallback
     const modelName = process.env.OPENAI_MODEL || 'gpt-4o-mini';
     const count = Number(n) || 3;
     const userMessage = `You are a copywriting assistant. Given the inputs below, produce exactly ${count} short marketing messages (each <= 100 characters). Return as a JSON array only, no extra commentary.\n\nInputs:\n${promptParts}\n\nOutput format:\n["suggestion 1", "suggestion 2", ...]`;
 
-    const response = await openai.chat.completions.create({
+    const response = await openaiClient.createChatCompletion({
       model: modelName,
       messages: [
-        { role: "system", content: "You are a helpful marketing copy assistant." },
-        { role: "user", content: userMessage }
+        { role: 'system', content: 'You are a helpful marketing copy assistant.' },
+        { role: 'user', content: userMessage }
       ],
       max_tokens: 128,
       temperature: 0.8,
     });
 
-    const raw = response.choices?.[0]?.message?.content || response.choices?.[0]?.text || "";
+    const raw = response.data?.choices?.[0]?.message?.content || response.data?.choices?.[0]?.text || '';
     let suggestions = [];
     try {
-      const jsonStart = raw.indexOf("[");
-      const jsonEnd = raw.lastIndexOf("]") + 1;
+      const jsonStart = raw.indexOf('[');
+      const jsonEnd = raw.lastIndexOf(']') + 1;
       if (jsonStart !== -1 && jsonEnd !== -1) {
         const jsonText = raw.substring(jsonStart, jsonEnd);
         suggestions = JSON.parse(jsonText);
       } else {
-        suggestions = raw.split(/\r?\n/).filter(Boolean).slice(0, count).map(s => s.replace(/^[-\d\.\)\s"]+/, "").trim());
+        suggestions = raw.split(/\r?\n/).filter(Boolean).slice(0, count).map(s => s.replace(/^[-\d\.\)\s"]+/, '').trim());
       }
     } catch (e) {
-      suggestions = raw.split(/\r?\n/).filter(Boolean).slice(0, count).map(s => s.replace(/^[-\d\.\)\s"]+/, "").trim());
+      suggestions = raw.split(/\r?\n/).filter(Boolean).slice(0, count).map(s => s.replace(/^[-\d\.\)\s"]+/, '').trim());
     }
 
     return res.json({ model: modelName, suggestions: suggestions.slice(0, count) });
   } catch (err) {
-    console.error("AI suggestion error:", err && err.message ? err.message : err);
-    return res.status(500).json({ error: "AI request failed", detail: err && err.message ? err.message : String(err) });
+    console.error('AI suggestion error:', err && err.message ? err.message : err);
+    return res.status(500).json({ error: 'AI request failed', detail: err && err.message ? err.message : String(err) });
   }
 });
-// --- end AI route (patched) ---
-
-
 
 // ---------- PASSPORT STRATEGY ----------
 const GOOGLE_CLIENT_ID = (process.env.GOOGLE_CLIENT_ID || '').trim();
@@ -244,8 +278,6 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET) {
       clientSecret: GOOGLE_CLIENT_SECRET,
       callbackURL: GOOGLE_CALLBACK_URL
     }, (accessToken, refreshToken, profile, done) => {
-      // For this assignment we store the full profile in session.
-      // In production, persist user in DB and serialize only user.id.
       return done(null, profile);
     }));
 
@@ -253,74 +285,11 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET) {
     passport.deserializeUser((obj, done) => done(null, obj));
 
     console.log('DEBUG: GoogleStrategy registered successfully.');
-    console.log('DEBUG: passport._strategy("google") ->', typeof passport._strategy === 'function' ? !!passport._strategy('google') : 'no _strategy func');
   } catch (err) {
     console.error('ERROR: Failed to register GoogleStrategy ->', err && err.message);
   }
 } else {
-  console.warn('Google OAuth not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in backend/.env.local to enable auth.');
-}
-
-// ---------- DATA FILES ----------
-const DATA_DIR = path.join(__dirname, 'data');
-const CUSTOMERS_FILE = path.join(DATA_DIR, 'customers.json');
-const ORDERS_FILE = path.join(DATA_DIR, 'orders.json');
-const SEGMENTS_FILE = path.join(DATA_DIR, 'segments.json');
-const CAMPAIGNS_FILE = path.join(DATA_DIR, 'campaigns.json');
-const COMM_LOG_FILE = path.join(DATA_DIR, 'communication_log.json');
-
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
-if (!fs.existsSync(CUSTOMERS_FILE)) fs.writeFileSync(CUSTOMERS_FILE, JSON.stringify([]));
-if (!fs.existsSync(ORDERS_FILE)) fs.writeFileSync(ORDERS_FILE, JSON.stringify([]));
-if (!fs.existsSync(SEGMENTS_FILE)) fs.writeFileSync(SEGMENTS_FILE, JSON.stringify([]));
-if (!fs.existsSync(CAMPAIGNS_FILE)) fs.writeFileSync(CAMPAIGNS_FILE, JSON.stringify([]));
-if (!fs.existsSync(COMM_LOG_FILE)) fs.writeFileSync(COMM_LOG_FILE, JSON.stringify([]));
-
-
-// ---------- PUB-SUB QUEUES (Bull + Redis) ----------
-const customerQueue = new Queue('customers', { redis: { host: '127.0.0.1', port: 6379 } });
-const orderQueue = new Queue('orders', { redis: { host: '127.0.0.1', port: 6379 } });
-
-customerQueue.process(async (job) => {
-  const data = job.data;
-  const customers = readJsonSafe(CUSTOMERS_FILE);
-  const existing = customers.find(c => c.email.toLowerCase() === data.email.toLowerCase());
-  if (!existing) {
-    customers.push(data);
-    writeJsonSafe(CUSTOMERS_FILE, customers);
-  }
-});
-
-orderQueue.process(async (job) => {
-  const data = job.data;
-  const customers = readJsonSafe(CUSTOMERS_FILE);
-  const customer = customers.find(c => c.email.toLowerCase() === data.customer_email.toLowerCase());
-  if (!customer) return;
-  const orders = readJsonSafe(ORDERS_FILE);
-  orders.push(data);
-  writeJsonSafe(ORDERS_FILE, orders);
-  customer.total_spent = Number((Number(customer.total_spent || 0) + Number(data.amount)).toFixed(2));
-  customer.last_order_date = data.date;
-  writeJsonSafe(CUSTOMERS_FILE, customers);
-});
-
-
-function readJsonSafe(filePath) {
-  try {
-    const raw = fs.readFileSync(filePath, 'utf8');
-    return JSON.parse(raw || '[]');
-  } catch (err) {
-    console.error('readJsonSafe error for', filePath, err.message || err);
-    return [];
-  }
-}
-function writeJsonSafe(filePath, arr) {
-  try {
-    fs.writeFileSync(filePath, JSON.stringify(arr, null, 2));
-  } catch (err) {
-    console.error('writeJsonSafe error for', filePath, err.message || err);
-    throw err;
-  }
+  console.warn('Google OAuth not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to enable auth.');
 }
 
 // ---------- AUTH HELPERS & ROUTES ----------
@@ -341,8 +310,9 @@ app.get('/auth/google', (req, res, next) => {
 app.get('/auth/google/callback',
   passport.authenticate('google', { failureRedirect: '/auth/failure', session: true }),
   (req, res) => {
-    // successful auth — redirect to frontend
-    res.redirect('http://localhost:5173');
+    // successful auth — redirect to frontend (env-driven)
+    const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+    res.redirect(FRONTEND_URL);
   }
 );
 
@@ -415,23 +385,19 @@ app.get('/', (req, res) => res.json({ status: 'ok', message: 'Hello from backend
 app.get('/health', (req, res) => res.json({ status: 'healthy', uptime: process.uptime() }));
 
 /** POST /api/customers */
-
 app.post('/api/customers', (req, res) => {
   const { error, value } = customerSchema.validate(req.body, { stripUnknown: true });
   if (error) return res.status(400).json({ error: error.details.map(d => d.message).join(', ') });
 
-  // If customersQueue is available, enqueue job and return 202 Accepted.
-  if (typeof customersQueue !== 'undefined' && customersQueue) {
+  if (customersQueue) {
     customersQueue.add({ payload: value }).then(job => {
       return res.status(202).json({ message: 'Customer enqueued for async ingestion', jobId: job.id });
     }).catch(err => {
       console.error('Queue add error:', err && err.message ? err.message : err);
-      // fallback to synchronous write if enqueue fails
     });
     return;
   }
 
-  // Fallback synchronous write (existing behavior)
   const customers = readJsonSafe(CUSTOMERS_FILE);
   const existing = customers.find(c => c.email.toLowerCase() === value.email.toLowerCase());
   if (existing) return res.status(200).json({ message: 'Customer already exists', data: existing });
@@ -456,23 +422,19 @@ app.get('/api/customers', (req, res) => {
 });
 
 /** POST /api/orders */
-
 app.post('/api/orders', (req, res) => {
   const { error, value } = orderSchema.validate(req.body, { stripUnknown: true });
   if (error) return res.status(400).json({ error: error.details.map(d => d.message).join(', ') });
 
-  // If ordersQueue is available, enqueue job and return 202 Accepted.
-  if (typeof ordersQueue !== 'undefined' && ordersQueue) {
+  if (ordersQueue) {
     ordersQueue.add({ payload: value }).then(job => {
       return res.status(202).json({ message: 'Order enqueued for async ingestion', jobId: job.id });
     }).catch(err => {
       console.error('Queue add error:', err && err.message ? err.message : err);
-      // fallback to synchronous write if enqueue fails
     });
     return;
   }
 
-  // Fallback synchronous write (existing behavior)
   const customers = readJsonSafe(CUSTOMERS_FILE);
   const customer = customers.find(c => c.email.toLowerCase() === value.customer_email.toLowerCase());
   if (!customer) return res.status(404).json({ error: 'Customer not found. Ingest customer first.' });
@@ -490,7 +452,6 @@ app.post('/api/orders', (req, res) => {
   orders.push(newOrder);
   writeJsonSafe(ORDERS_FILE, orders);
 
-  // update customer
   customer.total_spent = Number((Number(customer.total_spent || 0) + Number(newOrder.amount)).toFixed(2));
   customer.last_order_date = newOrder.date;
   writeJsonSafe(CUSTOMERS_FILE, customers);
@@ -504,12 +465,10 @@ app.get('/api/orders', (req, res) => {
 
 /** POST /api/segments - save a segment definition (protected) */
 app.post('/api/segments', ensureAuth, (req, res) => {
-  const payload = req.body; // expect { name, conditions, logic }
+  const payload = req.body;
   if (!payload || !payload.name || !Array.isArray(payload.conditions)) {
     return res.status(400).json({ error: 'Invalid segment payload. Expect { name, conditions: [] }' });
   }
-
-  // validate conditions on save
   const { error, value } = previewSchema.validate({ conditions: payload.conditions, logic: payload.logic || 'AND' }, { stripUnknown: true });
   if (error) return res.status(400).json({ error: error.details.map(d => d.message).join(', ') });
 
@@ -527,7 +486,7 @@ app.post('/api/segments', ensureAuth, (req, res) => {
   return res.status(201).json({ data: seg });
 });
 
-/** GET /api/segments - list saved segments (public) */
+/** GET /api/segments - list saved segments (protected) */
 app.get('/api/segments', ensureAuth, (req, res) => {
   const segments = readJsonSafe(SEGMENTS_FILE);
   res.json({ data: segments });
@@ -536,17 +495,12 @@ app.get('/api/segments', ensureAuth, (req, res) => {
 /** POST /api/campaigns - create a campaign from a segment (protected) */
 app.post('/api/campaigns', ensureAuth, (req, res) => {
   const { name, segmentId, message } = req.body;
-
   if (!name || !segmentId || !message) {
     return res.status(400).json({ error: 'name, segmentId and message are required' });
   }
-
   const segments = readJsonSafe(SEGMENTS_FILE);
   const segment = segments.find(s => s.id === segmentId);
-  if (!segment) {
-    return res.status(404).json({ error: 'Segment not found' });
-  }
-
+  if (!segment) return res.status(404).json({ error: 'Segment not found' });
   const campaigns = readJsonSafe(CAMPAIGNS_FILE);
   const newCampaign = {
     id: uuidv4(),
@@ -558,11 +512,10 @@ app.post('/api/campaigns', ensureAuth, (req, res) => {
   };
   campaigns.push(newCampaign);
   writeJsonSafe(CAMPAIGNS_FILE, campaigns);
-
   return res.status(201).json({ data: newCampaign });
 });
 
-/** GET /api/campaigns - list campaigns (public) */
+/** GET /api/campaigns - list campaigns (protected) */
 app.get('/api/campaigns', ensureAuth, (req, res) => {
   const campaigns = readJsonSafe(CAMPAIGNS_FILE);
   res.json({ data: campaigns });
@@ -572,8 +525,6 @@ app.get('/api/campaigns', ensureAuth, (req, res) => {
 function matchCondition(customer, condition) {
   const { field, op, value } = condition;
   const fieldVal = customer[field];
-
-  // date field handling
   if (field === 'last_order_date') {
     const leftTs = fieldVal ? Date.parse(fieldVal) : 0;
     const rightTs = Date.parse(String(value));
@@ -588,8 +539,6 @@ function matchCondition(customer, condition) {
       default: return false;
     }
   }
-
-  // numeric comparisons for total_spent
   if (field === 'total_spent') {
     const left = Number(fieldVal || 0);
     const right = Number(value);
@@ -604,8 +553,6 @@ function matchCondition(customer, condition) {
       default: return false;
     }
   }
-
-  // fallback string comparisons (email etc.)
   const leftStr = String(fieldVal || '').toLowerCase();
   const rightStr = String(value || '').toLowerCase();
   switch (op) {
@@ -628,7 +575,6 @@ app.post('/api/segments/preview', (req, res) => {
   return res.json({ audience_count: matches.length, sample: matches.slice(0, 10) });
 });
 
-// GET version (with ?rule=)
 app.get('/api/segments/preview', (req, res) => {
   const ruleStr = req.query.rule;
   if (!ruleStr) return res.status(400).json({ error: 'Provide rule JSON in query param ?rule=' });
@@ -637,7 +583,6 @@ app.get('/api/segments/preview', (req, res) => {
   catch (e) { return res.status(400).json({ error: 'Invalid JSON in rule param' }); }
   const { error, value } = previewSchema.validate(parsed, { stripUnknown: true });
   if (error) return res.status(400).json({ error: error.details.map(d => d.message).join(', ') });
-
   const customers = readJsonSafe(CUSTOMERS_FILE);
   const matches = customers.filter(c => {
     const results = value.conditions.map(cond => matchCondition(c, cond));
@@ -653,7 +598,6 @@ function addCommRecord(record) {
   writeJsonSafe(COMM_LOG_FILE, logs);
 }
 
-
 /** POST /api/delivery-receipt - accept delivery receipts from vendors */
 app.post('/api/delivery-receipt', (req, res) => {
   const payload = req.body || req.query || {} ;
@@ -664,7 +608,7 @@ app.post('/api/delivery-receipt', (req, res) => {
     return res.status(400).json({ error: 'Provide campaignId and customer_email in body' });
   }
   try {
-    const receipts = readJsonSafe("/mnt/data/xeno-intern-assignment-main-extracted/xeno-intern-assignment-main/backend/data/receipts.json");
+    const receipts = readJsonSafe(RECEIPTS_FILE);
     const rec = {
       id: uuidv4(),
       campaignId,
@@ -673,14 +617,14 @@ app.post('/api/delivery-receipt', (req, res) => {
       receivedAt: new Date().toISOString()
     };
     receipts.push(rec);
-    writeJsonSafe("/mnt/data/xeno-intern-assignment-main-extracted/xeno-intern-assignment-main/backend/data/receipts.json", receipts);
+    writeJsonSafe(RECEIPTS_FILE, receipts);
     return res.json({ ok: true, data: rec });
   } catch (e) {
     console.error('delivery-receipt error', e && e.message ? e.message : e);
     return res.status(500).json({ error: 'Failed to save receipt' });
   }
 });
-        
+
 /** POST /api/campaigns/:id/send (protected) */
 app.post('/api/campaigns/:id/send', ensureAuth, (req, res) => {
   const campaignId = req.params.id;
@@ -688,14 +632,12 @@ app.post('/api/campaigns/:id/send', ensureAuth, (req, res) => {
   const campaign = campaigns.find(c => c.id === campaignId);
   if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
-  // load segment
   const segments = readJsonSafe(SEGMENTS_FILE);
   const segment = segments.find(s => s.id === campaign.segmentId);
   if (!segment) {
     return res.status(404).json({ error: 'Segment for campaign not found' });
   }
 
-  // get audience
   const customers = readJsonSafe(CUSTOMERS_FILE);
   const matches = customers.filter(c => {
     const results = segment.conditions.map(cond => matchCondition(c, cond));
@@ -713,7 +655,7 @@ app.post('/api/campaigns/:id/send', ensureAuth, (req, res) => {
   const sample = [];
 
   matches.forEach((cust) => {
-    const success = Math.random() < 0.9; // 90% chance success
+    const success = Math.random() < 0.9;
     const status = success ? 'SENT' : 'FAILED';
     const record = {
       id: uuidv4(),
@@ -735,11 +677,15 @@ app.post('/api/campaigns/:id/send', ensureAuth, (req, res) => {
 });
 
 /** GET /api/communication-log (public) */
+app.get('/api/communication-log', (req, res) => {
+  const logs = readJsonSafe(COMM_LOG_FILE);
+  res.json({ data: logs });
+});
 
 // --- Receipts batch processor: runs every 30s and applies receipts to communication log ---
 function processReceiptsBatch() {
   try {
-    const receipts = readJsonSafe("/mnt/data/xeno-intern-assignment-main-extracted/xeno-intern-assignment-main/backend/data/receipts.json");
+    const receipts = readJsonSafe(RECEIPTS_FILE);
     if (!Array.isArray(receipts) || receipts.length === 0) return;
     const logs = readJsonSafe(COMM_LOG_FILE);
     let updated = false;
@@ -753,7 +699,7 @@ function processReceiptsBatch() {
     });
     if (updated) writeJsonSafe(COMM_LOG_FILE, logs);
     // clear receipts file
-    writeJsonSafe("/mnt/data/xeno-intern-assignment-main-extracted/xeno-intern-assignment-main/backend/data/receipts.json", []);
+    writeJsonSafe(RECEIPTS_FILE, []);
   } catch (e) {
     console.error('processReceiptsBatch error', e && e.message ? e.message : e);
   }
@@ -762,45 +708,9 @@ function processReceiptsBatch() {
 // schedule processor every 30 seconds
 setInterval(processReceiptsBatch, 30 * 1000);
 console.log('Receipts batch processor scheduled (every 30s).');
-app.get('/api/communication-log', (req, res) => {
-  const logs = readJsonSafe(COMM_LOG_FILE);
-  res.json({ data: logs });
-});
 
 // start server
 const PORT = process.env.PORT || 4000;
-
-
-// ---------- DELIVERY RECEIPT API + BATCH PROCESSOR ----------
-const RECEIPTS_FILE = path.join(DATA_DIR, 'receipts.json');
-if (!fs.existsSync(RECEIPTS_FILE)) fs.writeFileSync(RECEIPTS_FILE, JSON.stringify([]));
-
-app.post('/api/delivery-receipt', (req, res) => {
-  const { campaignId, customer_email, status } = req.body || {};
-  if (!campaignId || !customer_email || !status) {
-    return res.status(400).json({ error: 'campaignId, customer_email, status required' });
-  }
-  const receipts = readJsonSafe(RECEIPTS_FILE);
-  receipts.push({ campaignId, customer_email: customer_email.toLowerCase(), status, receivedAt: new Date().toISOString() });
-  writeJsonSafe(RECEIPTS_FILE, receipts);
-  return res.status(202).json({ message: 'Receipt accepted' });
-});
-
-// Batch processor every 30s
-setInterval(() => {
-  const receipts = readJsonSafe(RECEIPTS_FILE);
-  if (receipts.length === 0) return;
-  let logs = readJsonSafe(COMM_LOG_FILE);
-  receipts.forEach(r => {
-    const rec = logs.find(l => l.campaignId === r.campaignId && l.customer_email === r.customer_email);
-    if (rec) rec.delivery_status = r.status;
-  });
-  writeJsonSafe(COMM_LOG_FILE, logs);
-  fs.writeFileSync(RECEIPTS_FILE, JSON.stringify([]));
-  console.log('Processed', receipts.length, 'receipts');
-}, 30000);
-
-
 app.listen(PORT, () => {
-  console.log(`Backend server listening on http://localhost:${PORT}`);
+  console.log(`Backend server listening on port ${PORT}`);
 });
