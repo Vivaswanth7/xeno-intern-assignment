@@ -7,11 +7,38 @@ import CreateSegment from './pages/CreateSegment'
 import Campaigns from './pages/Campaigns'
 import Logs from './pages/Logs'
 
-// Use VITE_API_URL from env (set in Vercel) with a localhost fallback for dev
-const API_BASE = (import.meta.env.VITE_API_URL && import.meta.env.VITE_API_URL.replace(/\/$/, '')) || 'http://localhost:4000'
+/*
+  API_BASE resolution priority:
+  1) VITE_API_URL (set in Vercel / build env) — recommended for production when backend is on a different host
+  2) If running in browser:
+       - if host is localhost -> use local backend http://localhost:4000 (dev)
+       - otherwise assume same origin (window.location.origin) — good if frontend & backend share domain
+  3) Fallback to http://localhost:4000
+*/
+const API_BASE = (() => {
+  // read env (Vite exposes import.meta.env.VITE_* at build time)
+  const raw = import.meta.env.VITE_API_URL
+  if (raw && typeof raw === 'string' && raw.trim() !== '') {
+    return raw.replace(/\/$/, '')
+  }
 
-// ✅ set axios defaults for all requests (so relative paths use this base)
-axios.defaults.withCredentials = true
+  // If we are in the browser, decide based on the current origin
+  if (typeof window !== 'undefined' && window.location) {
+    const origin = window.location.origin
+    if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
+      // developer machine -> use local backend
+      return 'http://localhost:4000'
+    }
+    // production: assume backend is served from same origin unless VITE_API_URL is set
+    return origin
+  }
+
+  // final fallback (shouldn't normally hit)
+  return 'http://localhost:4000'
+})()
+
+// Configure axios defaults
+axios.defaults.withCredentials = true // required if you use cookies for session
 axios.defaults.baseURL = API_BASE
 
 export default function App() {
@@ -19,17 +46,31 @@ export default function App() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    axios.get("/me")
-      .then(res => setUser(res.data.data))
-      .catch(() => setUser(null))
+    // use absolute paths — axios will prefix with baseURL automatically
+    axios.get('/me')
+      .then(res => {
+        // defensive: res.data might be shaped differently; adapt if needed
+        setUser(res.data?.data ?? res.data ?? null)
+      })
+      .catch(err => {
+        setUser(null)
+        // optionally log for debugging (remove in prod)
+        // console.error('me fetch error', err)
+      })
       .finally(() => setLoading(false))
   }, [])
 
   const handleLogout = () => {
-    axios.get("/logout")
+    axios.get('/logout')
       .then(() => {
         setUser(null)
-        window.location.href = "/" // refresh to home after logout
+        // If frontend and backend are same origin this reload is fine
+        // If backend is separate, you might want to redirect to a safe route instead
+        window.location.href = '/'
+      })
+      .catch(() => {
+        setUser(null)
+        window.location.href = '/'
       })
   }
 
@@ -64,8 +105,8 @@ export default function App() {
               </button>
             </div>
           ) : (
-            <a 
-              href={`${API_BASE}/auth/google`}
+            <a
+              href={`${API_BASE.replace(/\/$/, '')}/auth/google`}
               style={{padding: "5px 10px", background: "blue", color: "white", borderRadius: "5px", textDecoration: "none"}}
             >
               Login with Google
@@ -78,7 +119,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Home />} />
 
-          {/* ✅ Protected Routes */}
+          {/* Protected Routes */}
           <Route path="/create" element={user ? <CreateSegment /> : <Navigate to="/" />} />
           <Route path="/campaigns" element={user ? <Campaigns /> : <Navigate to="/" />} />
           <Route path="/logs" element={user ? <Logs /> : <Navigate to="/" />} />
